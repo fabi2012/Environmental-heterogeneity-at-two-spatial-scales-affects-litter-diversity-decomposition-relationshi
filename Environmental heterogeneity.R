@@ -7,7 +7,6 @@ library(lmerTest)
 
 
 ####read the data
-setwd("C:/Users/sriva/Dropbox/grad students and PDFs/Fabiola/Decomposition")
 macroscale <- read.csv(file.choose(),head=T, sep=",") #spatialscales
 
 macroscale <-  mutate(macroscale, decomposition=(weightinitial - weightend)*100/weightinitial,
