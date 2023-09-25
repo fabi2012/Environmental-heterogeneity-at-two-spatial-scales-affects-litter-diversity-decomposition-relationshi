@@ -1,23 +1,34 @@
-###Main analysis of  Environmental heterogeneity at two spatial scales affects litter diversity-decomposition relationships
+ ###Main analysis of  Environmental heterogeneity at two spatial scales affects litter diversity-decomposition relationships
 
 library(vegan)
 library(tidyverse)
 library(car)
 library(lmerTest)
+library(piecewiseSEM)
+library(nlme)
+library(DHARMa)
+library(ggplot2)
+library(gridExtra)
+library(gridGraphics)
 
 
 ####read the data
 macroscale <- read.csv(file.choose(),head=T, sep=",") #spatialscales
+str(macroscale)
+
+macroscale$richness<-specnumber(macroscale[,c(16:25)])
+macroscale$abundance <- rowSums(macroscale[,c(16:25)], na.rm=TRUE) #Culicidae:scirtidae
 
 macroscale <-  mutate(macroscale, decomposition=(weightinitial - weightend)*100/weightinitial,
                       tasa= -(log10(weightend/weightinitial))/(120/365),
                       alnus=(Alnusinitial - Alnusend)/Alnusinitial, 
                       piper= (Piperinitial - Piperend)/Piperinitial,
                       croton=(Crotoninitial - Crotonend)/Crotoninitial,
-                      block = sample+12*(elevation == "Middle")+24*(elevation=="High"),
+                      block = sample+12*(habitat == "Middle")+24*(habitat=="High"),
                       block = as.factor(block),
                       litter_rich = (Alnusinitial>0)+ (Piperinitial>0)+(Crotoninitial>0))
 str(macroscale)
+
 #######Decomposition-------------
 
 #litter decomposition 
@@ -96,11 +107,190 @@ conductivity.glmm2<- lmer(conductivity~ litter_rich*elevation*habitat+(1|block)+
                           data=macroscale ,REML=TRUE)
 Anova(conductivity.glmm2 ,3, test="Chi") #habitat only
 
+###Macroinverytebrate response
+
+richness.glmm<- lmer(richness~ elevation*treatment*habitat+(1|block),
+                         data=macroscale ,REML=TRUE)
+Anova(richness.glmm ,3, test="Chi") #habitat
+
+abundance.glmm<- lmer(abundance~ elevation*treatment*habitat+(1|block),
+                     data=macroscale ,REML=TRUE)
+Anova(abundance.glmm ,3, test="Chi") #habitat
+
+
+###macroinvertebrate composition
+species <- filter(macroscale,abundance>0)[,c(16:25)]
+ambiental <- filter(macroscale,abundance>0)[,c(1:3,45)]
+adonis2(especies~elevation*treatment*habitat, data=filter(macroscale,abundance>0),
+        method="bray", 
+        na.action = na.omit)
+
+#### figure macroinvertebrate community 
+
+my_sum_decomposer<- macroscale%>%
+  group_by(elevation,treatment,habitat) %>%
+  summarise( 
+    n=n(),
+    mean_rich =mean(richness  ,na.rm=T),
+    sd_rich =sd(richness  ,na.rm = T),
+    mean_abu=mean(abundance ,na.rm=T),
+    sd_abu=sd(abundance ,na.rm=T)) %>%
+  mutate( se_rich=sd_rich/sqrt(n))  %>%
+  mutate( se_abu=sd_abu/sqrt(n))  %>%
+  mutate(elevation.2=
+           case_when(elevation =="High" ~ 3,
+                     elevation =="Low" ~ 1,
+                     elevation =="Mid" ~ 2))
+
+figureSA2 <- ggplot(my_sum_decomposer,
+                    aes(x=as.factor(treatment),
+                        y=mean_rich,
+                        colour = as.factor(elevation.2),
+                        shape=habitat)) +
+  geom_errorbar(aes(ymin=mean_rich-se_rich, ymax=mean_rich+se_rich),
+                width=0.1,
+                lwd = 0.6,
+                position = position_dodge(0.5)) +
+  geom_point(position = position_dodge(0.5),
+             lwd =2) + ggtitle("") +
+  scale_x_discrete(limit = c("nomixA","nomixB","nomixC", "mixA","mixB","mixC", "mixD"),
+                   labels = c("A","P","C","AP","AC","PC", "APC"),
+                   expand = expansion(add = c(0.6)))+
+  ylab("Macroinvertebrate richness")+
+  scale_y_continuous(limits=c(0,1.2),breaks = seq(0, 1.2, by = 0.1)) +
+  scale_shape_manual(name = "  ",
+                     labels = c("edge", "interior"),
+                     values = c(16,17)) + 
+  scale_colour_manual(name = "Habitat",
+                     labels = c("Low","Mid","High"),
+                     values = c("black","#479734","#F0A00E"))+
+  theme(legend.position = c(0.9,0.9),
+        legend.text=element_text(size=12,family = "Arial"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        panel.border = element_blank(),
+        axis.line = element_line(colour = "black"),
+        text=element_text(family="Arial",size=12),
+        axis.text.y=element_text(size=12,family = "Arial"),
+        axis.text.x=element_text(size=12,family = "Arial"))
+
+figureSB2 <- ggplot(my_sum_decomposer,
+                    aes(x=as.factor(treatment),
+                        y=mean_abu,
+                        color = as.factor(elevation.2),
+                        shape=habitat)) +
+  geom_errorbar(aes(ymin=mean_abu-se_abu, ymax=mean_abu+se_abu),
+                width=0.1,
+                lwd = 0.6,
+                position = position_dodge(0.5)) +
+  geom_point(position = position_dodge(0.5),
+             lwd =2) + ggtitle("") +
+  scale_x_discrete(limit = c("nomixA","nomixB","nomixC", "mixA","mixB","mixC", "mixD"),
+                   labels = c("A","P","C","AP","AC","PC", "APC"),
+                   expand = expansion(add = c(0.6)))+
+  ylab("Macroinvertebrate abundance") +
+  xlab("Litter composition")+
+  scale_y_continuous(limits=c(0,70),breaks = seq(0, 70, by = 10)) +
+  scale_shape_manual(name = "  ",
+                     labels = c("edge", "interior"),
+                     values = c(16,17)) + 
+  scale_color_manual(name = "Habitat",
+                     labels = c("Low","Mid","High"),
+                     values = c("black","#479734","#F0A00E"))+
+  theme(legend.position = c(0.9,0.9),
+        legend.text=element_text(size=12,family = "Arial"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        panel.border = element_blank(),
+        axis.line = element_line(colour = "black"),
+        text=element_text(family="Arial",size=12),
+        axis.text.y=element_text(size=12,family = "Arial"),
+        axis.text.x=element_text(size=12,family = "Arial"))
+
+g_legend<-function(a.gplot){
+  tmp <- ggplot_gtable(ggplot_build(a.gplot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  return(legend)
+}
+
+mylegend<-g_legend(figureSA2+theme(legend.position="bottom"))
+tiff("FigureS2.tiff",
+     height = 9,
+     width = 7,
+     unit="in",
+     res = 1200)
+
+grid.arrange(arrangeGrob(figureSA2+
+                           ggtitle("a") +
+                           theme(legend.position = "none",
+                                 legend.title=element_text(size=rel(1)),
+                                 legend.text=element_text(size=rel(1)),
+                                 axis.title.x=element_blank(),
+                                 axis.text.x=element_blank(),
+                                 axis.ticks.x=element_blank(),
+                                 axis.text.y=element_text(size=rel(1)),
+                                 plot.title = element_text(size=rel(1))),
+                         figureSB2+
+                           ggtitle("b")+
+                           theme(legend.position = "none",
+                                 axis.title.x=element_text(size=rel(1),family="Arial"),
+                                 axis.text.x=element_text(size=rel(1),family="Arial"),
+                                 axis.text.y=element_text(size=rel(1)),
+                                 plot.title = element_text(size=rel(1),family="Arial")),ncol = 1),
+             mylegend,heights=c(10, 1))
+dev.off()
+
+####species composition figure
+
+relative.abundance<-  decostand(species, method = "total")#realtive abundance
+
+species_distmat <- vegdist(relative.abundance, method = "bray")#distance
+
+grafica.comunidad <- metaMDS(species_distmat,
+                             distance = "bray",
+                             k = 3,
+                             maxit = 999, 
+                             trymax = 500,
+                             wascores = TRUE)
+
+data.scores <-as.data.frame(scores(grafica.comunidad$points))
+
+#add columns to data frame 
+data.scores$Site <-  ambiental$elevation
+data.scores$habitat <-  ambiental$habitat
+
+tiff("FigureS3.tiff",
+     height = 9,
+     width = 7,
+     unit="in",
+     res = 1200)
+
+ggplot(data.scores, aes(x = MDS1, y = MDS2)) + 
+  geom_point(size = 2, aes( shape = habitat, colour = Site))+ 
+  theme(axis.text.y = element_text(colour = "black", size = 12, face = "bold"), 
+        axis.text.x = element_text(colour = "black", face = "bold", size = 12), 
+        legend.text = element_text(size = 12, face ="bold", colour ="black"), 
+        legend.position = "right", axis.title.y = element_text(face = "bold", size = 14), 
+        axis.title.x = element_text(face = "bold", size = 14, colour = "black"), 
+        legend.title = element_text(size = 14, colour = "black", face = "bold"), 
+        panel.background = element_blank(), panel.border = element_rect(colour = "black", fill = NA, size = 1.2),
+        legend.key=element_blank()) + 
+  labs(x = "NMDS1", colour = "Elevation", y = "NMDS2", shape = "Habitat")  + 
+  scale_colour_manual(name = "Elevation",
+                     labels = c("Low","Mid","High"),
+                     values = c("black","#479734","#F0A00E"))
+
+
+dev.off()
+
 
 ########Diversity effects on decomposition (selection and complementary effects)----------
 #arrange the data for analysis
-
-data.diversity<- macroscale[,c(1:4,18:21)] %>% 
+str(macroscale)
+data.diversity<- macroscale[,c(1:3,41:45)]%>% 
   gather(species,decompositionvalue,alnus:croton, na.rm=F)
 
 Y.data <- filter(data.diversity,treatment=="mixA"|treatment=="mixB"|treatment=="mixC"|treatment=="mixD")
@@ -143,7 +333,7 @@ funCESE <- function(df,n,tr,sh) {
 
 funCESE(df=df,"1", "mixD", "edge")
 funCESE(df=df,"2", "mixA", "edge")
-funCESE(df=df,"25", "mixA", "edge")
+funCESE(df=df,"3", "mixA", "edge")
 
 #now this function for entire dataset
 funCESE2 <- function(test) {
@@ -1274,7 +1464,7 @@ figure5C <- ggplot(my_sum_bio1,
         axis.text.x=element_text(size=12,family = "Arial"))
 
 
-tiff("Figure5.tiff",
+tiff("Figure5corregida.tiff",
      height = 9,
      width = 7,
      unit="in",
@@ -1310,4 +1500,109 @@ grid.arrange(arrangeGrob(figure5A+
              mylegend,heights=c(10, 1))
 
 dev.off()
+
+#=== Invertebrate and BDEF mechanisms =====
+
+#Composition?
+
+macroscale %>% select(Culicidae:scirtidae) %>% colSums(na.rm=TRUE)
+#Culicidae    chironomidae Ceratopogonidae         Diptera       syrphidae 
+#5241              97              14              16              12 
+#Ephydridae       Tipulidae   Hydrophilidea       scirtidae 
+#4              11               2               2 
+
+5241/(5241+97+14+16+12+4+11+2+2) #0.9707
+#97% of individuals are Culicids 
+
+invertmix<-macroscale %>% 
+  select(elevation, habitat, treatment, block, 
+         litter_rich, abundance, richness,
+         Alnusinitial, Crotoninitial, Piperinitial) %>% 
+  filter(litter_rich>1) %>% 
+  na.omit() %>% 
+  unite("id", c(elevation, habitat, treatment, block), sep = "_")
+
+invert_bdef<- result.diversity2 %>% 
+  unite("id", c(elevation, habitat, treatment, block), sep = "_") %>% 
+  left_join(invertmix, by = ("id"="id")) %>% 
+  separate(id, into = c("elevation", "habitat", "treatment", "block"), sep = "_") %>% 
+  na.omit() %>% 
+  mutate(
+    elevation= as.factor(elevation),
+    habitat = as.factor(habitat),
+    treatment = as.factor(treatment),
+    elevation.1 = if_else(elevation=="Low", 2.4, 
+                        if_else(habitat=="Middle", 2.85, 3.2))
+  ) 
+
+
+
+tapply(invert_bdef$abundance, invert_bdef$elevation, meanx)
+#   High        Low     Middle 
+#0.2736842 29.2439024  4.8043478 
+
+tapply(invert_bdef$richness, invert_bdef$elevation, meanx)
+#   High       Low    Middle 
+#0.1578947 0.8048780 0.3695652 
+
+invert_bdef_scaled<-invert_bdef %>% 
+  mutate(sqrt_abundance = sqrt(abundance)) %>% 
+  select(c("NBE", "SE", "CE","elevation.1", "Alnusinitial", "Crotoninitial","Piperinitial", "sqrt_abundance", "richness")) %>% 
+  transmute(across(NBE:richness, scale, .names = "{.col}")) %>% #
+  cbind(invert_bdef$block) %>% 
+  rename(block = 'invert_bdef$block') %>% 
+  mutate(block = as.factor(block)) %>% 
+  as_tibble()
+
+invert_bdef_scale2<-invert_bdef %>% 
+  mutate(sqrt_abundance = sqrt(abundance)) %>% 
+  select(c("NBE", "SE", "CE","elevation.1", "Alnusinitial", "Crotoninitial","Piperinitial", "sqrt_abundance", "richness", "block")) %>% 
+  mutate(NBE = as.vector(scale(NBE)), #needed to wrap scale in as.vector or else both matrix and array and "class" too long in pSEM summary
+         SE = as.vector(scale(SE)),
+         CE = as.vector(scale(CE)),
+         elevation = as.vector(scale(elevation.1)),
+         Alnusinitial = as.vector(scale(Alnusinitial)),
+         Crotoninitial = as.vector(scale(Crotoninitial)),
+         Piperinitial = as.vector(scale(Piperinitial)),
+         sqrt_abundance = as.vector(scale(sqrt_abundance)),
+         richnessaquatic = as.vector(scale(richness))) %>% 
+  mutate(block = as.factor(block)) %>% 
+  as.data.frame()
+
+#I decided not to include richness in SEM as so little variation (mainly 0 vs 1 species) and difficult distribution
+#little preliminary evidence that richness important either
+
+sem1<- psem(
+  lmer(NBE~ CE +elevation*Alnusinitial + elevation*Piperinitial + sqrt_abundance +
+         (1|block), REML = TRUE, data = invert_bdef_scale2),
+  lmer(CE~ elevation*Alnusinitial + elevation*Piperinitial + sqrt_abundance + 
+         (1|block), REML = TRUE, data = invert_bdef_scale2),
+  lmer(sqrt_abundance~ elevation + (1|block), REML = TRUE, data = invert_bdef_scale2),
+  data = invert_bdef_scale2)
+
+AIC(sem1)#1592.879
+summary(sem1)
+
+sem2<- psem(
+  lmer(NBE~ CE +elevation + Alnusinitial + Piperinitial + sqrt_abundance +
+         (1|block), REML = TRUE, data = invert_bdef_scale2),
+  lmer(CE~ elevation + Alnusinitial + Piperinitial + sqrt_abundance + 
+         (1|block), REML = TRUE, data = invert_bdef_scale2),
+  lmer(sqrt_abundance~ elevation + (1|block), REML = TRUE, data = invert_bdef_scale2),
+  data = invert_bdef_scale2)
+
+AIC(sem2)#1573.197 model without interactions is better (much lower AIC)
+
+summary(sem2)
+
+m0 <- lmer(NBE~ CE +elevation + Alnusinitial + Piperinitial + sqrt_abundance +
+       (1|block), REML = TRUE, data = invert_bdef_scale2)
+
+
+#effect of elevation on CE via abundance
+
+simulationOutput <- simulateResiduals(fittedModel=m0 , plot = F)
+plotQQunif(simulationOutput) 
+plotResiduals(simulationOutput, quantreg = FALSE)
+
 
