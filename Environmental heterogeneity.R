@@ -13,7 +13,7 @@ library(gridGraphics)
 
 
 ####read the data
-macroscale <- read.csv(file.choose(),head=T, sep=",") #spatialscales
+macroscale <- read.csv(file.choose(),head=T, sep=",") #spatialscales1
 str(macroscale)
 
 macroscale$richness<-specnumber(macroscale[,c(16:25)])
